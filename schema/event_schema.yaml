@@ -1,0 +1,187 @@
+# Event Schema Definitions
+# Language-agnostic schema definitions for the streaming pipeline
+
+schemas:
+  user_event:
+    type: object
+    required:
+      - user_id
+      - event_type
+    properties:
+      event_id:
+        type: string
+        format: uuid
+        description: "Unique identifier for the event"
+      user_id:
+        type: string
+        description: "Unique identifier for the user"
+      event_type:
+        type: string
+        enum: ["page_view", "click", "purchase", "signup", "login", "logout"]
+        description: "Type of event"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Event timestamp in ISO format"
+      session_id:
+        type: string
+        description: "Session identifier"
+      # Event-specific data
+      page_url:
+        type: string
+        format: uri
+        description: "URL of the page"
+      element_id:
+        type: string
+        description: "ID of the clicked element"
+      product_id:
+        type: string
+        description: "Product identifier for purchases"
+      amount:
+        type: number
+        minimum: 0
+        description: "Transaction amount"
+      # User context
+      user_agent:
+        type: string
+        description: "User agent string"
+      ip_address:
+        type: string
+        format: ipv4
+        description: "IP address"
+      country:
+        type: string
+        description: "User's country"
+      # Metadata
+      source:
+        type: string
+        default: "web"
+        description: "Source of the event"
+      version:
+        type: string
+        default: "1.0"
+        description: "Schema version"
+
+  transformed_event:
+    type: object
+    required:
+      - event_id
+      - user_id
+      - event_type
+      - timestamp
+      - normalized_event_type
+      - event_category
+      - is_conversion
+    properties:
+      event_id:
+        type: string
+        description: "Original event ID"
+      user_id:
+        type: string
+        description: "User identifier"
+      event_type:
+        type: string
+        description: "Original event type"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Event timestamp"
+      session_id:
+        type: string
+        description: "Session identifier"
+      # Enriched fields
+      normalized_event_type:
+        type: string
+        enum: ["view", "interaction", "conversion", "authentication"]
+        description: "Normalized event type"
+      event_category:
+        type: string
+        enum: ["navigation", "interaction", "commerce", "user_management", "authentication"]
+        description: "Categorized event type"
+      is_conversion:
+        type: boolean
+        description: "Whether this is a conversion event"
+      # User context (cleaned)
+      user_agent_parsed:
+        type: [object, 'null']
+        description: "Parsed user agent information"
+      country_code:
+        type: [string, 'null']
+        pattern: "^[A-Z]{2}$"
+        description: "ISO country code"
+      # Business metrics
+      revenue:
+        type: number
+        minimum: 0
+        description: "Revenue from this event"
+      conversion_value:
+        type: number
+        minimum: 0
+        description: "Conversion value"
+      # Processing metadata
+      processed_at:
+        type: string
+        format: date-time
+        description: "Processing timestamp"
+      processing_version:
+        type: string
+        default: "1.0"
+        description: "Processing version"
+
+  dead_letter_event:
+    type: object
+    required:
+      - original_event
+      - error_type
+      - error_message
+      - processing_stage
+    properties:
+      original_event:
+        type: object
+        description: "Original event data"
+      error_type:
+        type: string
+        description: "Type of error that occurred"
+      error_message:
+        type: string
+        description: "Detailed error message"
+      failed_at:
+        type: string
+        format: date-time
+        description: "Failure timestamp"
+      processing_stage:
+        type: string
+        enum: ["producer_validation", "consumer_validation", "transformation", "sink_write"]
+        description: "Stage where failure occurred"
+      # Additional context
+      retry_count:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Number of retry attempts"
+      can_retry:
+        type: boolean
+        default: true
+        description: "Whether this event can be retried"
+
+# Event type mappings for transformation
+mappings:
+  event_type_mapping:
+    page_view: view
+    click: interaction
+    purchase: conversion
+    signup: conversion
+    login: authentication
+    logout: authentication
+  
+  conversion_events:
+    - purchase
+    - signup
+  
+  event_categories:
+    page_view: navigation
+    click: interaction
+    purchase: commerce
+    signup: user_management
+    login: authentication
+    logout: authentication 

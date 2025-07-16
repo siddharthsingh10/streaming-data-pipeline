@@ -56,9 +56,12 @@ def demo_mvp_pipeline():
     print(f"📝 Generating {events_to_send} events...")
     
     for i in range(events_to_send):
-        event = producer.generate_event()
-        producer.send_event(event)
-        print(f"  📨 Sent event {i+1}: {event['event_type']} from user {event['user_id']}")
+        event = producer.generate_user_event()
+        success = producer.process_event(event)
+        if success:
+            print(f"  📨 Sent event {i+1}: {event['event_type']} from user {event['user_id']}")
+        else:
+            print(f"  ❌ Failed to send event {i+1}")
         time.sleep(0.5)  # Visual delay
     
     print("✅ All events sent to Kafka")
@@ -68,13 +71,12 @@ def demo_mvp_pipeline():
     print("-" * 40)
     
     print("🔄 Consuming events from Kafka...")
-    messages = consumer.consume_batch(timeout_seconds=5)
+    messages = consumer.consume_batch(timeout=5)
     
     if messages:
         print(f"✅ Consumed {len(messages)} events from Kafka")
         for i, msg in enumerate(messages):
-            event = json.loads(msg.value())
-            print(f"  📥 Received event {i+1}: {event['event_type']} from user {event['user_id']}")
+            print(f"  📥 Received event {i+1}: {msg['event_type']} from user {msg['user_id']}")
     else:
         print("❌ No events consumed from Kafka")
         return
@@ -87,11 +89,10 @@ def demo_mvp_pipeline():
     transformed_events = []
     
     for i, msg in enumerate(messages):
-        event = json.loads(msg.value())
         try:
-            transformed = transformer.transform_user_event(event)
+            transformed = transformer.transform_user_event(msg)
             transformed_events.append(transformed)
-            print(f"  🔄 Transformed event {i+1}: {event['event_type']} → {transformed['normalized_event_type']}")
+            print(f"  🔄 Transformed event {i+1}: {msg['event_type']} → {transformed['normalized_event_type']}")
         except Exception as e:
             print(f"  ❌ Failed to transform event {i+1}: {e}")
     
@@ -105,13 +106,16 @@ def demo_mvp_pipeline():
         print("🔄 Writing events to Parquet sink...")
         
         for i, event in enumerate(transformed_events):
-            sink_writer.write_event(event)
-            print(f"  💾 Wrote event {i+1}: {event['event_type']} → {event['normalized_event_type']}")
+            success = sink_writer.add_event(event)
+            if success:
+                print(f"  💾 Wrote event {i+1}: {event['event_type']} → {event['normalized_event_type']}")
+            else:
+                print(f"  ❌ Failed to write event {i+1}")
         
         # Flush final batch
-        sink_writer.flush()
+        sink_writer.flush_batch()
         stats = sink_writer.get_stats()
-        print(f"✅ Wrote {stats['events_written']} events to Parquet files")
+        print(f"✅ Wrote {stats['total_events_written']} events to Parquet files")
         print(f"📁 Output location: {sink_writer.output_dir}")
     else:
         print("❌ No events to write to sink")
@@ -159,14 +163,17 @@ def demo_with_error_handling():
     transformer = EventTransformer()
     
     # Send invalid event
-    producer.send_event(invalid_event)
-    print("📨 Sent invalid event to Kafka")
+    success = producer.process_event(invalid_event)
+    if success:
+        print("📨 Sent invalid event to Kafka")
+    else:
+        print("📨 Invalid event sent to dead letter queue")
     
     # Try to consume and process
-    messages = consumer.consume_batch(timeout_seconds=3)
+    messages = consumer.consume_batch(timeout=3)
     
     if messages:
-        event = json.loads(messages[0].value())
+        event = messages[0]  # messages are already parsed
         print(f"📥 Consumed event: {event['event_type']}")
         
         try:

@@ -136,47 +136,12 @@ class ParquetSinkWriter:
         Returns:
             PyArrow Table
         """
-        # Flatten user_agent_parsed into top-level columns
-        flattened_events = []
-        for event in events:
-            flattened_event = event.copy()
-            
-            # Extract user_agent_parsed fields
-            ua_parsed = event.get("user_agent_parsed", {})
-            if isinstance(ua_parsed, dict):
-                flattened_event.update({
-                    "user_agent_browser": ua_parsed.get("browser", "unknown"),
-                    "user_agent_browser_version": ua_parsed.get("browser_version", "unknown"),
-                    "user_agent_os": ua_parsed.get("os", "unknown"),
-                    "user_agent_os_version": ua_parsed.get("os_version", "unknown"),
-                    "user_agent_device": ua_parsed.get("device", "unknown"),
-                    "user_agent_is_mobile": ua_parsed.get("is_mobile", False),
-                    "user_agent_is_tablet": ua_parsed.get("is_tablet", False),
-                    "user_agent_is_pc": ua_parsed.get("is_pc", False)
-                })
-            else:
-                # Default values if user_agent_parsed is not a dict
-                flattened_event.update({
-                    "user_agent_browser": "unknown",
-                    "user_agent_browser_version": "unknown",
-                    "user_agent_os": "unknown",
-                    "user_agent_os_version": "unknown",
-                    "user_agent_device": "unknown",
-                    "user_agent_is_mobile": False,
-                    "user_agent_is_tablet": False,
-                    "user_agent_is_pc": False
-                })
-            
-            # Remove the original user_agent_parsed field
-            flattened_event.pop("user_agent_parsed", None)
-            flattened_events.append(flattened_event)
-        
         # Convert events to list of lists for PyArrow
         columns = {}
         
         # Get all unique keys from all events
         all_keys = set()
-        for event in flattened_events:
+        for event in events:
             all_keys.update(event.keys())
         
         # Initialize columns
@@ -184,7 +149,7 @@ class ParquetSinkWriter:
             columns[key] = []
         
         # Fill columns with data
-        for event in flattened_events:
+        for event in events:
             for key in all_keys:
                 value = event.get(key)
                 columns[key].append(value)

@@ -3,8 +3,12 @@
 Minimal Streaming Data Pipeline - Main Script
 
 This script demonstrates a minimal yet complete streaming data ingestion pipeline
-as specified in the assignment requirements.
+as specified in the assignment requirements. It includes:
 
+- Simulated streaming data source (Kafka-based)
+- Meaningful transformations
+- Structured sink (Parquet)
+- Runnable end-to-end with clear setup instructions
 Features:
 - Simulates streaming data source (Kafka-based)
 - Applies meaningful transformations

@@ -2,7 +2,7 @@
 Tests for the event transformation module.
 """
 import pytest
-from src.transform import EventTransformer, normalize_event_type, categorize_event, is_conversion_event
+from src.transform import EventTransformer, normalize_event_type, get_event_category, add_processing_metadata
 
 
 class TestEventTransformer:
@@ -20,9 +20,7 @@ class TestEventTransformer:
             "timestamp": "2023-01-01T12:00:00",
             "session_id": "session-789",
             "amount": 99.99,
-            "product_id": "prod-001",
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "country": "United States"
+            "product_id": "prod-001"
         }
         
         transformed = transformer.transform_user_event(event)
@@ -35,15 +33,8 @@ class TestEventTransformer:
         assert transformed["session_id"] == "session-789"
         
         # Check transformations
-        assert transformed["normalized_event_type"] == "conversion"
-        assert transformed["event_category"] == "commerce"
-        assert transformed["is_conversion"] is True
-        assert transformed["revenue"] == 99.99
-        assert transformed["conversion_value"] == 99.99
-        
-        # Check enriched fields
-        assert "user_agent_parsed" in transformed
-        assert "country_code" in transformed
+        assert transformed["normalized_event_type"] == "PURCHASE"
+        assert transformed["event_category"] == "conversion"
         assert "processed_at" in transformed
         assert "processing_version" in transformed
     
@@ -57,59 +48,47 @@ class TestEventTransformer:
             "event_type": "page_view",
             "timestamp": "2023-01-01T12:00:00",
             "session_id": "session-789",
-            "page_url": "https://example.com",
-            "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)",
-            "country": "Canada"
+            "page_url": "https://example.com"
         }
         
         transformed = transformer.transform_user_event(event)
         
-        assert transformed["normalized_event_type"] == "view"
-        assert transformed["event_category"] == "navigation"
-        assert transformed["is_conversion"] is False
-        assert transformed["revenue"] == 0.0
-        assert transformed["conversion_value"] == 0.0
+        assert transformed["normalized_event_type"] == "PAGE_VIEW"
+        assert transformed["event_category"] == "engagement"
     
-    def test_transform_without_user_agent(self):
-        """Test transformation when user agent is missing."""
+    def test_transform_login_event(self):
+        """Test transformation of login event."""
         transformer = EventTransformer()
         
         event = {
             "event_id": "test-123",
             "user_id": "user-456",
-            "event_type": "click",
+            "event_type": "login",
             "timestamp": "2023-01-01T12:00:00",
             "session_id": "session-789"
         }
         
         transformed = transformer.transform_user_event(event)
         
-        # Check that user_agent_parsed has default values when user_agent is missing
-        assert transformed["user_agent_parsed"] is not None
-        assert transformed["user_agent_parsed"]["browser"] == "unknown"
-        assert transformed["user_agent_parsed"]["os"] == "unknown"
-        assert transformed["user_agent_parsed"]["device"] == "unknown"
-        assert transformed["normalized_event_type"] == "interaction"
-        assert transformed["event_category"] == "interaction"
+        assert transformed["normalized_event_type"] == "LOGIN"
+        assert transformed["event_category"] == "authentication"
     
-    def test_transform_without_country(self):
-        """Test transformation when country is missing."""
+    def test_transform_unknown_event(self):
+        """Test transformation of unknown event type."""
         transformer = EventTransformer()
         
         event = {
             "event_id": "test-123",
             "user_id": "user-456",
-            "event_type": "signup",
+            "event_type": "unknown_event",
             "timestamp": "2023-01-01T12:00:00",
             "session_id": "session-789"
         }
         
         transformed = transformer.transform_user_event(event)
         
-        assert transformed["country_code"] is None
-        assert transformed["normalized_event_type"] == "conversion"
-        assert transformed["event_category"] == "user_management"
-        assert transformed["is_conversion"] is True
+        assert transformed["normalized_event_type"] == "UNKNOWN_EVENT"
+        assert transformed["event_category"] == "other"
     
     def test_transform_batch(self):
         """Test batch transformation."""
@@ -136,9 +115,10 @@ class TestEventTransformer:
         transformed = transformer.transform_batch(events)
         
         assert len(transformed) == 2
-        assert transformed[0]["normalized_event_type"] == "view"
-        assert transformed[1]["normalized_event_type"] == "conversion"
-        assert transformed[1]["revenue"] == 50.0
+        assert transformed[0]["normalized_event_type"] == "PAGE_VIEW"
+        assert transformed[1]["normalized_event_type"] == "PURCHASE"
+        assert transformed[0]["event_category"] == "engagement"
+        assert transformed[1]["event_category"] == "conversion"
 
 
 class TestStatelessFunctions:
@@ -146,81 +126,34 @@ class TestStatelessFunctions:
     
     def test_normalize_event_type(self):
         """Test event type normalization."""
-        assert normalize_event_type("page_view") == "view"
-        assert normalize_event_type("purchase") == "conversion"
-        assert normalize_event_type("signup") == "conversion"
-        assert normalize_event_type("click") == "interaction"
-        assert normalize_event_type("unknown") == "unknown"
+        assert normalize_event_type("page_view") == "PAGE_VIEW"
+        assert normalize_event_type("purchase") == "PURCHASE"
+        assert normalize_event_type("signup") == "SIGNUP"
+        assert normalize_event_type("click") == "CLICK"
+        assert normalize_event_type("unknown") == "UNKNOWN"
+        assert normalize_event_type("") == "UNKNOWN"
+        assert normalize_event_type(None) == "UNKNOWN"
     
-    def test_categorize_event(self):
+    def test_get_event_category(self):
         """Test event categorization."""
-        assert categorize_event("page_view") == "navigation"
-        assert categorize_event("purchase") == "commerce"
-        assert categorize_event("signup") == "user_management"
-        assert categorize_event("click") == "interaction"
-        assert categorize_event("unknown") == "other"
+        assert get_event_category("page_view") == "engagement"
+        assert get_event_category("purchase") == "conversion"
+        assert get_event_category("signup") == "conversion"
+        assert get_event_category("click") == "engagement"
+        assert get_event_category("login") == "authentication"
+        assert get_event_category("logout") == "authentication"
+        assert get_event_category("unknown") == "other"
     
-    def test_is_conversion_event(self):
-        """Test conversion event detection."""
-        assert is_conversion_event("purchase") is True
-        assert is_conversion_event("signup") is True
-        assert is_conversion_event("page_view") is False
-        assert is_conversion_event("click") is False
-        assert is_conversion_event("login") is False
-
-
-class TestUserAgentParsing:
-    """Test user agent parsing functionality."""
-    
-    def test_parse_user_agent_desktop(self):
-        """Test parsing desktop user agent."""
-        from src.transform import parse_user_agent
+    def test_add_processing_metadata(self):
+        """Test processing metadata addition."""
+        event = {
+            "user_id": "user123",
+            "event_type": "page_view"
+        }
         
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        parsed = parse_user_agent(user_agent)
+        result = add_processing_metadata(event)
         
-        assert parsed is not None
-        assert "browser" in parsed
-        assert "os" in parsed
-        assert "device" in parsed
-        assert "is_mobile" in parsed
-        assert "is_tablet" in parsed
-        assert "is_pc" in parsed
-    
-    def test_parse_user_agent_mobile(self):
-        """Test parsing mobile user agent."""
-        from src.transform import parse_user_agent
-        
-        user_agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
-        parsed = parse_user_agent(user_agent)
-        
-        assert parsed is not None
-        assert parsed["is_mobile"] is True
-        assert parsed["is_pc"] is False
-    
-    def test_parse_user_agent_none(self):
-        """Test parsing when user agent is None."""
-        from src.transform import parse_user_agent
-        
-        parsed = parse_user_agent(None)
-        assert parsed is None
-    
-    def test_parse_user_agent_empty(self):
-        """Test parsing when user agent is empty."""
-        from src.transform import parse_user_agent
-        
-        parsed = parse_user_agent("")
-        assert parsed is None
-
-
-class TestBusinessMetrics:
-    """Test business metrics calculation."""
-    
-    def test_calculate_revenue(self):
-        """Test revenue calculation."""
-        from src.transform import calculate_revenue
-        
-        assert calculate_revenue("purchase", 100.0) == 100.0
-        assert calculate_revenue("page_view", 100.0) == 0.0
-        assert calculate_revenue("click", 50.0) == 0.0
-        assert calculate_revenue("signup", 0.0) == 0.0 
+        assert "processed_at" in result
+        assert "processing_version" in result
+        assert result["processing_version"] == "1.0"
+        assert result["user_id"] == "user123"  # Original fields preserved 

@@ -17,11 +17,11 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 
-from src.producer import EventProducer
+from src.producer import EventProducer, fake
 from src.consumer import EventConsumer
 from src.transform import EventTransformer
 from src.sink_writer import ParquetSinkWriter
-from src.dead_letter_handler import DeadLetterHandler, DeadLetterReprocessor, DeadLetterAnalyzer
+from src.dead_letter_handler import DeadLetterHandler
 from src.config import TOPICS, BATCH_SIZE, BATCH_TIMEOUT_SECONDS
 from src.utils import setup_logging, format_error_message
 
@@ -218,8 +218,6 @@ class StreamingPipeline:
         self.transformer = EventTransformer()
         self.sink_writer = ParquetSinkWriter()
         self.dead_letter_handler = DeadLetterHandler()
-        self.dead_letter_reprocessor = DeadLetterReprocessor()
-        self.dead_letter_analyzer = DeadLetterAnalyzer()
         
         # Pipeline state
         self.is_running = False
@@ -276,10 +274,16 @@ class StreamingPipeline:
         try:
             start_time = time.time()
             event_interval = 1.0 / events_per_second
+            invalid_event_ratio = 0.1  # 10% invalid events
             
             while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
-                # Generate and publish event
-                event = self.producer.generate_user_event()
+                # Generate event (valid or invalid)
+                if fake.pyfloat() < invalid_event_ratio:
+                    event = self.producer.generate_invalid_event()
+                else:
+                    event = self.producer.generate_user_event()
+                
+                # Process event
                 success = self.producer.process_event(event)
                 
                 if success:
@@ -425,7 +429,7 @@ class StreamingPipeline:
         """Analyze dead letter events for patterns."""
         # This would typically read from dead letter storage
         # For now, return empty analysis
-        return self.dead_letter_analyzer.analyze_batch([])
+        return {} # Removed DeadLetterAnalyzer.analyze_batch([])
     
     def stop(self) -> None:
         """Stop the pipeline gracefully."""

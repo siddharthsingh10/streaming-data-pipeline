@@ -10,7 +10,6 @@ pandas==2.1.4
 # Schema Validation
 jsonschema==4.20.0
 pyyaml==6.0.1
-user-agents==2.2.0
 
 # Data Generation
 faker==20.1.0

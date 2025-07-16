@@ -77,7 +77,8 @@ See `DESIGN_DOCUMENT.md` for detailed architecture and design rationale.
 
 ## 🚀 Quick Demo
 
-Run the minimal pipeline:
+### Option 1: MVP Demo (Recommended)
+See the core pipeline flow step-by-step:
 
 ```bash
 # Start infrastructure
@@ -86,8 +87,24 @@ docker-compose up -d
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the pipeline
+# Run the MVP demo
+python demo_mvp.py
+```
+
+This demonstrates: **Producer → Kafka → Consumer → Transformer → Sink**
+
+### Option 2: Full Pipeline
+Run the complete streaming pipeline:
+
+```bash
+# Start infrastructure
+docker-compose up -d
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the full pipeline
 python main.py
 ```
 
-This will run a 60-second demo with 5 events per second, demonstrating the complete streaming pipeline. 
+This runs a 60-second demo with 5 events per second, demonstrating the complete streaming pipeline with monitoring. 

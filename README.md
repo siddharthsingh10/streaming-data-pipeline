@@ -1,6 +1,6 @@
 # Streaming Data Ingestion Pipeline
 
-A minimal yet complete streaming data pipeline that ingests JSON events via Kafka, applies meaningful transformations, and writes output to structured sinks with error handling.
+Data pipeline that ingests JSON events via Kafka, applies meaningful transformations, and writes output to structured sinks with error handling.
 
 ## 🏗 Architecture
 

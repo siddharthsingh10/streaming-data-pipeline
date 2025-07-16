@@ -13,19 +13,46 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
                                 Dead Letter Queue
 ```
 
+### Infrastructure Components
+
+#### **Confluent Kafka Platform**
+- **Purpose**: Provides reliable message streaming with enterprise features
+- **Components**:
+  - **Zookeeper**: Coordination service for Kafka cluster
+  - **Confluent Kafka**: Enhanced Apache Kafka with additional features
+  - **Confluent Control Center**: Web-based monitoring and management UI
+- **Design Decision**: Chose Confluent over Bitnami for:
+  - Better compatibility and stability
+  - Built-in monitoring capabilities
+  - Enterprise-grade features
+  - Web UI for real-time monitoring
+
+#### **Monitoring & Observability**
+- **Confluent Control Center**: Web UI at http://localhost:9021
+  - Real-time topic monitoring
+  - Message browsing and search
+  - Cluster health metrics
+  - Consumer group monitoring
+  - Dead letter queue inspection
+- **Design Decision**: Web UI provides:
+  - Visual monitoring of data flow
+  - Debugging capabilities
+  - Production-ready observability
+
 ### Component Breakdown
 
 #### 1. **Event Generator (Producer)**
 - **Purpose**: Simulates a streaming data source
 - **Implementation**: Synthetic event generation using Faker library
 - **Output**: JSON events with realistic user interaction data
+- **Features**: 10% invalid event generation for dead letter queue testing
 - **Design Decision**: Used Kafka for scalability and real-world relevance
 
 #### 2. **Kafka Message Broker**
 - **Purpose**: Provides reliable message streaming
 - **Topics**: 
-  - `raw-events`: Incoming events from producer
-  - `dead-letter-queue`: Failed events for analysis
+  - `events-topic`: Valid events for processing
+  - `dead-letter-topic`: Failed events with error details
 - **Design Decision**: Chose Kafka over simple file streaming for:
   - Message persistence and replay capability
   - Scalability and fault tolerance
@@ -62,7 +89,7 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 - **Purpose**: Manages failed events and provides error analysis
 - **Features**:
   - Error categorization and analysis
-  - Reprocessing capabilities
+  - Detailed error information storage
   - Error pattern detection
 - **Design Decision**: Essential for production reliability and debugging
 
@@ -70,18 +97,28 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 
 ### 1. **Technology Stack**
 
-**Chosen**: Python with Kafka, PyArrow, Faker
+**Chosen**: Python with Confluent Kafka, PyArrow, Faker
 **Rationale**:
 - **Python**: Widely used in data engineering, rich ecosystem
-- **Kafka**: Industry standard for streaming, provides persistence and scalability
+- **Confluent Kafka**: Enterprise-grade Kafka with monitoring capabilities
 - **PyArrow**: Efficient Parquet handling, memory-efficient processing
 - **Faker**: Generates realistic test data
 
 **Alternatives Considered**:
+- Bitnami Kafka (rejected: compatibility issues with newer versions)
 - Simple file-based streaming (rejected: lacks real-world relevance)
 - CSV output (rejected: Parquet offers better performance and features)
 
-### 2. **Data Flow Architecture**
+### 2. **Infrastructure Architecture**
+
+**Chosen**: Docker Compose with Confluent Platform
+**Rationale**:
+- **Confluent Control Center**: Provides web-based monitoring
+- **Enterprise Features**: Better stability and compatibility
+- **Easy Setup**: Single docker-compose command starts everything
+- **Production Ready**: Mirrors enterprise streaming setups
+
+### 3. **Data Flow Architecture**
 
 **Chosen**: Producer → Kafka → Consumer → Transform → Sink
 **Rationale**:
@@ -89,7 +126,7 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 - **Fault tolerance**: Kafka provides message persistence
 - **Real-world pattern**: Mirrors production streaming pipelines
 
-### 3. **Event Schema Design**
+### 4. **Event Schema Design**
 
 **Chosen**: Comprehensive user interaction events
 **Rationale**:
@@ -97,21 +134,30 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 - **Rich transformations**: Enables meaningful data processing
 - **Validation complexity**: Tests schema validation capabilities
 
-### 4. **Error Handling Strategy**
+### 5. **Error Handling Strategy**
 
-**Chosen**: Dead letter queue with analysis
+**Chosen**: Dead letter queue with detailed error analysis
 **Rationale**:
 - **Data preservation**: No data loss during processing
 - **Debugging capability**: Error analysis helps identify issues
-- **Reprocessing**: Failed events can be retried
+- **Web UI monitoring**: Control Center provides visual error inspection
 
-### 5. **Storage Format**
+### 6. **Storage Format**
 
 **Chosen**: Parquet with partitioning
 **Rationale**:
 - **Query performance**: Columnar format enables efficient analytics
 - **Compression**: Reduces storage costs
 - **Schema evolution**: Supports schema changes over time
+
+### 7. **Monitoring Strategy**
+
+**Chosen**: Confluent Control Center + Application Logging
+**Rationale**:
+- **Real-time visibility**: Web UI shows live data flow
+- **Message inspection**: Browse and search messages
+- **Cluster health**: Monitor Kafka cluster status
+- **Error tracking**: Visual dead letter queue monitoring
 
 ## 📊 Data Flow Example
 
@@ -151,32 +197,44 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 - Written to: `data/output/2024/01/15/events.parquet`
 - Partitioned by date for efficient querying
 
+**4. Dead Letter Example**
+```json
+{
+  "original_event": {...},
+  "error_type": "ValidationError",
+  "error_message": "'invalid_event_type' is not one of ['page_view', 'click', 'purchase', 'signup', 'login', 'logout']",
+  "failed_at": "2024-01-15T10:30:00Z",
+  "processing_stage": "producer_validation"
+}
+```
+
 ## 🚀 Implementation Phases
 
 ### Phase 1: Core Infrastructure
-- ✅ Kafka setup and configuration
+- ✅ Confluent Kafka setup and configuration
+- ✅ Confluent Control Center integration
 - ✅ Basic producer and consumer
-- ✅ Event schema definition
 
 ### Phase 2: Data Processing
 - ✅ Event transformation logic
 - ✅ Schema validation
-- ✅ Error handling
+- ✅ Error handling with dead letter queue
 
 ### Phase 3: Storage and Reliability
 - ✅ Parquet sink writer
-- ✅ Dead letter queue
+- ✅ Dead letter queue with detailed error info
 - ✅ Batch processing
 
-### Phase 4: Advanced Features
-- ✅ Error analysis and categorization
-- ✅ Reprocessing capabilities
-- ✅ Pattern detection
+### Phase 4: Monitoring and Observability
+- ✅ Web UI monitoring (Control Center)
+- ✅ Real-time message inspection
+- ✅ Cluster health monitoring
 
 ### Phase 5: Production Features
 - ✅ Health monitoring
 - ✅ Metrics collection
 - ✅ Graceful shutdown
+- ✅ Manual message generation for testing
 
 ## 🧪 Testing Strategy
 
@@ -185,10 +243,11 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 - **Integration Tests**: End-to-end pipeline testing
 - **Error Scenarios**: Dead letter queue testing
 - **Performance Tests**: Batch processing validation
+- **UI Testing**: Control Center message inspection
 
 ### Test Data
 - **Valid Events**: Normal processing flow
-- **Invalid Events**: Schema validation testing
+- **Invalid Events**: Schema validation testing (10% generation)
 - **Edge Cases**: Boundary condition testing
 
 ## 📈 Performance Considerations
@@ -198,73 +257,19 @@ Event Generator → Kafka → Consumer → Transformer → Parquet Sink
 2. **Parquet Compression**: Minimizes storage footprint
 3. **Efficient Serialization**: PyArrow for fast data handling
 4. **Connection Pooling**: Reuses Kafka connections
+5. **Web UI Monitoring**: Real-time observability without performance impact
 
-### Scalability Features
-1. **Partitioned Storage**: Enables parallel processing
-2. **Configurable Batch Sizes**: Tune for different workloads
-3. **Dead Letter Queue**: Handles backpressure gracefully
+## 🔍 Monitoring and Debugging
 
-## 🔍 Monitoring and Observability
+### Confluent Control Center Features
+- **Topic Monitoring**: Real-time message counts and throughput
+- **Message Browser**: Search and inspect individual messages
+- **Consumer Groups**: Monitor consumer lag and health
+- **Cluster Health**: Overall system status and metrics
+- **Dead Letter Inspection**: Visual error analysis
 
-### Metrics Collected
-- Events processed per second
-- Error rates and types
-- Processing latency
-- Storage utilization
-
-### Health Checks
-- Component availability
-- Error rate thresholds
-- Resource utilization
-
-## 🛠 Setup and Deployment
-
-### Prerequisites
-- Docker and Docker Compose
-- Python 3.8+
-- 4GB+ RAM for Kafka
-
-### Quick Start
-```bash
-# Start infrastructure
-docker-compose up -d
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run pipeline
-python -m src.pipeline
-```
-
-## 🎯 Alignment with Requirements
-
-### ✅ **Core Requirements Met**
-1. **Streaming Data Source**: Kafka-based event generation
-2. **Meaningful Transformations**: Normalization, enrichment, filtering
-3. **Sink Storage**: Parquet files with partitioning
-4. **End-to-End Runnable**: Complete pipeline with setup instructions
-
-### 🎨 **Design Philosophy**
-- **Minimal but Complete**: Core functionality without over-engineering
-- **Production-Ready**: Real-world patterns and error handling
-- **Maintainable**: Clear separation of concerns
-- **Testable**: Comprehensive test coverage
-
-## 🔮 Future Enhancements
-
-### Potential Improvements
-1. **Real-time Monitoring**: Grafana dashboards
-2. **Schema Evolution**: Backward compatibility handling
-3. **Multi-tenant Support**: Event routing by tenant
-4. **Advanced Analytics**: Real-time aggregations
-5. **Cloud Deployment**: AWS/GCP integration
-
-### Scalability Considerations
-1. **Horizontal Scaling**: Multiple consumer instances
-2. **Data Retention**: TTL policies for old data
-3. **Backup Strategy**: Data replication and recovery
-4. **Security**: Encryption and access controls
-
----
-
-*This design document provides a comprehensive overview of the streaming pipeline architecture, design decisions, and implementation rationale. The solution balances minimal requirements with production-ready features to demonstrate real-world streaming pipeline capabilities.* 
+### Application Logging
+- **Structured Logging**: JSON format for easy parsing
+- **Error Tracking**: Detailed error information
+- **Performance Metrics**: Processing time and throughput
+- **Health Checks**: Component status monitoring 

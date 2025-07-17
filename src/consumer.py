@@ -292,6 +292,9 @@ class DeadLetterConsumer:
         self.config['group.id'] = 'dead-letter-consumer-group'
         self.consumer = Consumer(self.config)
         
+        # Initialize dead letter handler for file writing
+        self.dead_letter_handler = DeadLetterHandler()
+        
         # Subscribe to dead letter topic
         self.consumer.subscribe([TOPICS['dead_letter']])
         logger.info("Dead letter consumer initialized")
@@ -309,11 +312,13 @@ class DeadLetterConsumer:
             logger.warning(f"Original event: {event.get('original_event', {})}")
             logger.warning(f"Processing stage: {event.get('processing_stage', 'Unknown')}")
             
-            # In a real system, you might:
-            # - Store to a separate database
-            # - Send alerts
-            # - Attempt reprocessing
-            # - Generate metrics
+            # Write dead letter event to file using the handler
+            success = self.dead_letter_handler.process_dead_letter_event(event)
+            
+            if success:
+                logger.warning(f"Successfully wrote dead letter event to file")
+            else:
+                logger.error(f"Failed to write dead letter event to file")
             
         except Exception as e:
             logger.error(f"Failed to process dead letter event: {e}")
@@ -370,7 +375,12 @@ class DeadLetterConsumer:
     def close(self):
         """Close the dead letter consumer."""
         try:
-            self.consumer.close()
+            if self.dead_letter_handler:
+                self.dead_letter_handler.close()
+            
+            if self.consumer:
+                self.consumer.close()
+            
             logger.info("Dead letter consumer closed")
         except Exception as e:
             logger.error(f"Error closing dead letter consumer: {e}")

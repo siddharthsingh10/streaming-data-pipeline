@@ -18,7 +18,7 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 
 from src.producer import EventProducer, fake
-from src.consumer import EventConsumer
+from src.consumer import EventConsumer, DeadLetterConsumer
 from src.transform import EventTransformer
 from src.sink_writer import ParquetSinkWriter
 from src.dead_letter_handler import DeadLetterHandler
@@ -153,6 +153,23 @@ class PipelineHealthChecker:
                 'error': str(e)
             }
     
+    def check_dead_letter_consumer_health(self, consumer: DeadLetterConsumer) -> Dict[str, Any]:
+        """Check dead letter consumer health."""
+        try:
+            stats = {
+                'status': 'healthy',
+                'message': 'Dead letter consumer operational'
+            }
+            
+            # Basic health check - in a real system you'd track more metrics
+            return stats
+            
+        except Exception as e:
+            return {
+                'status': 'unhealthy',
+                'error': str(e)
+            }
+    
     def check_overall_health(self, components: Dict[str, Any]) -> Dict[str, Any]:
         """Check overall pipeline health."""
         health_status = {
@@ -167,6 +184,8 @@ class PipelineHealthChecker:
                 health_status['components'][name] = self.check_producer_health(component)
             elif name == 'consumer':
                 health_status['components'][name] = self.check_consumer_health(component)
+            elif name == 'dead_letter_consumer':
+                health_status['components'][name] = self.check_dead_letter_consumer_health(component)
             elif name == 'sink_writer':
                 health_status['components'][name] = self.check_sink_health(component)
             elif name == 'dead_letter_handler':
@@ -215,6 +234,7 @@ class StreamingPipeline:
         # Initialize components
         self.producer = EventProducer()
         self.consumer = EventConsumer()
+        self.dead_letter_consumer = DeadLetterConsumer()
         self.transformer = EventTransformer()
         self.sink_writer = ParquetSinkWriter()
         self.dead_letter_handler = DeadLetterHandler()
@@ -259,7 +279,15 @@ class StreamingPipeline:
             )
             producer_thread.start()
             
-            # Run consumer in main thread
+            # Start dead letter consumer in separate thread
+            dead_letter_thread = threading.Thread(
+                target=self._run_dead_letter_consumer,
+                args=(duration_seconds,),
+                daemon=True
+            )
+            dead_letter_thread.start()
+            
+            # Run main consumer in main thread
             self._run_consumer(duration_seconds)
             
         except KeyboardInterrupt:
@@ -321,6 +349,27 @@ class StreamingPipeline:
                     
         except Exception as e:
             logger.error(f"Consumer error: {e}")
+    
+    def _run_dead_letter_consumer(self, duration_seconds: int) -> None:
+        """Run the dead letter consumer in a separate thread."""
+        try:
+            start_time = time.time()
+            
+            while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
+                # Consume dead letter messages
+                message = self.dead_letter_consumer.consume_message(timeout=1.0)
+                
+                if message is not None:
+                    # Process dead letter event
+                    self.dead_letter_consumer.process_dead_letter_event(message)
+                    self.metrics.dead_letter_events += 1
+                    logger.warning(f"Processed dead letter event from topic")
+                else:
+                    # No messages, sleep briefly
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            logger.error(f"Dead letter consumer error: {e}")
     
     def process_batch(self, messages: List[Dict[str, Any]]) -> tuple[int, int]:
         """
@@ -387,6 +436,7 @@ class StreamingPipeline:
                 components = {
                     'producer': self.producer,
                     'consumer': self.consumer,
+                    'dead_letter_consumer': self.dead_letter_consumer,
                     'sink_writer': self.sink_writer,
                     'dead_letter_handler': self.dead_letter_handler
                 }
@@ -445,6 +495,9 @@ class StreamingPipeline:
             
             if self.consumer:
                 self.consumer.close()
+            
+            if self.dead_letter_consumer:
+                self.dead_letter_consumer.close()
             
             if self.sink_writer:
                 self.sink_writer.close()

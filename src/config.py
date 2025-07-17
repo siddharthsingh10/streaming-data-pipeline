@@ -26,7 +26,8 @@ PRODUCER_CONFIG = {
 # Consumer Configuration
 CONSUMER_CONFIG = {
     **KAFKA_CONFIG,
-    'enable.auto.commit': False,
+    'enable.auto.commit': True,
+    'auto.offset.reset': 'latest',
     'session.timeout.ms': 30000,
     'heartbeat.interval.ms': 3000
 }
@@ -36,6 +37,9 @@ TOPICS = {
     'events': 'events-topic',
     'dead_letter': 'dead-letter-topic'
 }
+
+# Remove topic partitioning and partitioning strategy configs
+# (Revert to original state)
 
 # Data Processing
 BATCH_SIZE = 100

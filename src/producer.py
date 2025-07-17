@@ -164,40 +164,53 @@ class EventProducer:
     
     def process_event(self, event: Dict[str, Any]) -> bool:
         """
-        Process a single event (validate and publish).
+        Process a single event (validate, transform, and store).
         
         Args:
             event: Event data to process
-            
+        
         Returns:
             bool: True if processed successfully
         """
-        # Validate event
-        is_valid, error_message = self.validate_event(event)
-        
-        if is_valid:
-            # Publish to events topic
-            success = self.publish_event(event, TOPICS['events'])
-            if success:
-                self.event_count += 1
-                logger.debug(f"Published valid event: {event.get('event_id', 'unknown')}")
-            return success
-        else:
-            # Create dead letter event
-            dead_letter_event = {
-                "original_event": event,
-                "error_type": "ValidationError",
-                "error_message": error_message,
-                "failed_at": datetime.now().isoformat(),
-                "processing_stage": "producer_validation"
-            }
+        try:
+            # Validate event
+            is_valid, error_message = self.validate_event(event)
             
-            # Publish to dead letter topic
-            success = self.publish_event(dead_letter_event, TOPICS['dead_letter'])
-            if success:
+            if not is_valid:
+                logger.warning(f"Invalid event: {error_message}")
                 self.error_count += 1
-                logger.warning(f"Published dead letter event: {error_message}")
+                
+                # Send to dead letter topic
+                dead_letter_event = {
+                    "original_event": event,
+                    "error_type": "validation_error",
+                    "error_message": error_message,
+                    "failed_at": datetime.now().isoformat(),
+                    "processing_stage": "producer_validation"
+                }
+                
+                self.producer.produce(
+                    topic=TOPICS['dead_letter'],
+                    value=json.dumps(dead_letter_event),
+                    callback=self._delivery_report
+                )
+                
+                return False
             
+            # Publish to events topic (no partition key)
+            self.producer.produce(
+                topic=TOPICS['events'],
+                value=json.dumps(event),
+                callback=self._delivery_report
+            )
+            
+            self.event_count += 1
+            logger.debug(f"Event sent: {event.get('event_id', 'unknown')}")
+            return True
+        except Exception as e:
+            self.error_count += 1
+            error_message = format_error_message(e)
+            logger.error(f"Failed to send event: {error_message}")
             return False
     
     def run(self, duration_seconds: int = 60, events_per_second: int = 10, 
@@ -243,7 +256,6 @@ class EventProducer:
     def close(self):
         """Close the producer."""
         self.producer.flush()
-        self.producer.close()
         logger.info("Producer closed")
 
 

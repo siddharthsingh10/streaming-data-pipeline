@@ -53,7 +53,7 @@ class EventConsumer:
         
         Args:
             timeout: Timeout in seconds
-            
+        
         Returns:
             Parsed message or None if no message available
         """

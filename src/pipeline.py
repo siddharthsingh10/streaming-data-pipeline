@@ -34,6 +34,8 @@ class PipelineMetrics:
     start_time: datetime
     events_produced: int = 0
     events_consumed: int = 0
+    valid_events_consumed: int = 0  # Events from events-topic
+    dead_letter_events_consumed: int = 0  # Events from dead-letter-topic
     events_transformed: int = 0
     events_written: int = 0
     dead_letter_events: int = 0
@@ -47,17 +49,21 @@ class PipelineMetrics:
     
     def get_success_rate(self) -> float:
         """Calculate success rate."""
-        total_events = self.events_consumed
+        total_events = self.valid_events_consumed
         if total_events == 0:
             return 0.0
         return (self.events_written / total_events) * 100
     
     def get_error_rate(self) -> float:
         """Calculate error rate."""
-        total_events = self.events_consumed
+        total_events = self.valid_events_consumed
         if total_events == 0:
             return 0.0
         return (self.errors / total_events) * 100
+    
+    def get_total_consumed(self) -> int:
+        """Get total events consumed (valid + dead letter)."""
+        return self.valid_events_consumed + self.dead_letter_events_consumed
 
 
 class PipelineHealthChecker:
@@ -182,7 +188,7 @@ class PipelineHealthChecker:
         for name, component in components.items():
             if name == 'producer':
                 health_status['components'][name] = self.check_producer_health(component)
-            elif name == 'consumer':
+            elif name == 'events_consumer':
                 health_status['components'][name] = self.check_consumer_health(component)
             elif name == 'dead_letter_consumer':
                 health_status['components'][name] = self.check_dead_letter_consumer_health(component)
@@ -279,16 +285,26 @@ class StreamingPipeline:
             )
             producer_thread.start()
             
+            # Start events consumer in separate thread
+            events_consumer_thread = threading.Thread(
+                target=self._run_events_consumer,
+                args=(duration_seconds,),
+                daemon=True
+            )
+            events_consumer_thread.start()
+            
             # Start dead letter consumer in separate thread
-            dead_letter_thread = threading.Thread(
+            dead_letter_consumer_thread = threading.Thread(
                 target=self._run_dead_letter_consumer,
                 args=(duration_seconds,),
                 daemon=True
             )
-            dead_letter_thread.start()
+            dead_letter_consumer_thread.start()
             
-            # Run main consumer in main thread
-            self._run_consumer(duration_seconds)
+            # Wait for all threads to complete
+            producer_thread.join()
+            events_consumer_thread.join()
+            dead_letter_consumer_thread.join()
             
         except KeyboardInterrupt:
             logger.info("Pipeline stopped by user")
@@ -302,7 +318,7 @@ class StreamingPipeline:
         try:
             start_time = time.time()
             event_interval = 1.0 / events_per_second
-            invalid_event_ratio = 0.1  # 10% invalid events
+            invalid_event_ratio = 0.05  # 5% invalid events (reduced from 10%)
             
             while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
                 # Generate event (valid or invalid)
@@ -324,59 +340,38 @@ class StreamingPipeline:
         except Exception as e:
             logger.error(f"Producer error: {e}")
     
-    def _run_consumer(self, duration_seconds: int) -> None:
-        """Run the consumer."""
+    def _run_events_consumer(self, duration_seconds: int) -> None:
+        """Run the events consumer in a separate thread."""
         try:
             start_time = time.time()
             
             while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
-                # Consume batch of messages
+                # Consume batch of messages from events topic
                 messages = self.consumer.consume_batch()
                 
                 if messages:
-                    # Process batch
-                    processed, errors = self.process_batch(messages)
+                    # Process valid events (these are already validated by producer)
+                    processed, errors = self.process_valid_events(messages)
                     
-                    self.metrics.events_consumed += len(messages)
+                    self.metrics.valid_events_consumed += len(messages)
                     self.metrics.events_transformed += processed
                     self.metrics.errors += errors
                     self.metrics.batches_processed += 1
                     
-                    logger.info(f"Batch processed: {processed} events, {errors} errors")
+                    logger.info(f"Events batch processed: {processed} events, {errors} errors")
                 else:
                     # No messages, sleep briefly
                     time.sleep(0.1)
                     
         except Exception as e:
-            logger.error(f"Consumer error: {e}")
+            logger.error(f"Events consumer error: {e}")
     
-    def _run_dead_letter_consumer(self, duration_seconds: int) -> None:
-        """Run the dead letter consumer in a separate thread."""
-        try:
-            start_time = time.time()
-            
-            while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
-                # Consume dead letter messages
-                message = self.dead_letter_consumer.consume_message(timeout=1.0)
-                
-                if message is not None:
-                    # Process dead letter event
-                    self.dead_letter_consumer.process_dead_letter_event(message)
-                    self.metrics.dead_letter_events += 1
-                    logger.warning(f"Processed dead letter event from topic")
-                else:
-                    # No messages, sleep briefly
-                    time.sleep(0.1)
-                    
-        except Exception as e:
-            logger.error(f"Dead letter consumer error: {e}")
-    
-    def process_batch(self, messages: List[Dict[str, Any]]) -> tuple[int, int]:
+    def process_valid_events(self, messages: List[Dict[str, Any]]) -> tuple[int, int]:
         """
-        Process a batch of messages.
+        Process valid events from the events topic.
         
         Args:
-            messages: List of messages to process
+            messages: List of valid events to process
             
         Returns:
             Tuple of (processed_count, error_count)
@@ -386,18 +381,10 @@ class StreamingPipeline:
         
         for message in messages:
             try:
-                # Validate event
-                is_valid, error_message = self.consumer.validate_event(message)
-                
-                if not is_valid:
-                    logger.warning(f"Invalid event: {error_message}")
-                    errors += 1
-                    continue
-                
-                # Transform event
+                # Transform valid event
                 transformed_event = self.transformer.transform_user_event(message)
                 
-                # Write to sink
+                # Write to Parquet sink
                 success = self.sink_writer.add_event(transformed_event)
                 
                 if success:
@@ -411,22 +398,65 @@ class StreamingPipeline:
                 errors += 1
                 self.metrics.errors += 1
                 
-                # Create dead letter event
+                # Create dead letter event for processing errors
                 dead_letter_event = {
                     "original_event": message,
                     "error_type": type(e).__name__,
                     "error_message": format_error_message(e),
                     "failed_at": datetime.now().isoformat(),
-                    "processing_stage": "pipeline_processing"
+                    "processing_stage": "events_consumer_processing"
                 }
                 
                 # Process dead letter event
                 self.dead_letter_handler.process_dead_letter_event(dead_letter_event)
                 self.metrics.dead_letter_events += 1
                 
-                logger.error(f"Failed to process event: {e}")
+                logger.error(f"Failed to process valid event: {e}")
         
         return processed, errors
+    
+    def _run_dead_letter_consumer(self, duration_seconds: int) -> None:
+        """Run the dead letter consumer in a separate thread."""
+        try:
+            start_time = time.time()
+            
+            while time.time() - start_time < duration_seconds and not self.shutdown_event.is_set():
+                # Consume dead letter messages from dead letter topic
+                message = self.dead_letter_consumer.consume_message(timeout=1.0)
+                
+                if message is not None:
+                    # Process dead letter event (write as JSON)
+                    self.process_dead_letter_event(message)
+                    self.metrics.dead_letter_events += 1
+                    self.metrics.dead_letter_events_consumed += 1 # Increment dead letter consumed count
+                    logger.warning(f"Processed dead letter event from topic")
+                else:
+                    # No messages, sleep briefly
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            logger.error(f"Dead letter consumer error: {e}")
+    
+    def process_dead_letter_event(self, message: Dict[str, Any]) -> None:
+        """
+        Process a dead letter event from the dead letter topic.
+        Simply write to JSON file without further processing.
+        
+        Args:
+            message: Dead letter event to process
+        """
+        try:
+            # Write dead letter event as JSON for debugging (no further processing)
+            success = self.dead_letter_handler.process_dead_letter_event(message)
+            
+            if success:
+                logger.warning(f"Successfully wrote dead letter event to JSON file")
+            else:
+                logger.error(f"Failed to write dead letter event to JSON file")
+                
+        except Exception as e:
+            logger.error(f"Failed to write dead letter event to JSON: {e}")
+            # Don't create new dead letter events - just log the error
     
     def _monitoring_loop(self) -> None:
         """Monitoring loop for health checks and metrics."""
@@ -435,7 +465,7 @@ class StreamingPipeline:
                 # Perform health check
                 components = {
                     'producer': self.producer,
-                    'consumer': self.consumer,
+                    'events_consumer': self.consumer,
                     'dead_letter_consumer': self.dead_letter_consumer,
                     'sink_writer': self.sink_writer,
                     'dead_letter_handler': self.dead_letter_handler
@@ -466,7 +496,7 @@ class StreamingPipeline:
         metrics_dict['success_rate'] = self.metrics.get_success_rate()
         metrics_dict['error_rate'] = self.metrics.get_error_rate()
         metrics_dict['events_per_second'] = (
-            self.metrics.events_consumed / 
+            self.metrics.get_total_consumed() / 
             max(self.metrics.processing_time_seconds, 1)
         )
         return metrics_dict
@@ -556,7 +586,9 @@ def run_pipeline_demo(duration_seconds: int = 60, events_per_second: int = 5) ->
         
         print("\n📊 FINAL METRICS:")
         print(f"  Events Produced: {metrics['events_produced']}")
-        print(f"  Events Consumed: {metrics['events_consumed']}")
+        print(f"  Total Events Consumed: {metrics['valid_events_consumed'] + metrics['dead_letter_events_consumed']}")
+        print(f"    ├─ Valid Events Consumed: {metrics['valid_events_consumed']}")
+        print(f"    └─ Dead Letter Events Consumed: {metrics['dead_letter_events_consumed']}")
         print(f"  Events Transformed: {metrics['events_transformed']}")
         print(f"  Events Written: {metrics['events_written']}")
         print(f"  Dead Letter Events: {metrics['dead_letter_events']}")
@@ -568,7 +600,6 @@ def run_pipeline_demo(duration_seconds: int = 60, events_per_second: int = 5) ->
         print(f"  Processing Time: {metrics['processing_time_seconds']:.2f} seconds")
         
         print("\n🏥 HEALTH STATUS:")
-        print(f"  Overall Status: {health_status['overall_status']}")
         for component, status in health_status['components'].items():
             print(f"  {component.title()}: {status['status']}")
         
